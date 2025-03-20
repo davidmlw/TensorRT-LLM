@@ -33,6 +33,7 @@ from ._util import check_flash_mla_config, estimate_max_kv_cache_tokens, is_mla
 
 def create_py_executor(executor_config: ExecutorConfig,
                        checkpoint_dir: str = None,
+                       checkpoint: dict = None,
                        engine_dir: str = None):
     if executor_config.pytorch_backend_config is None:
         executor_config.pytorch_backend_config = PyTorchConfig()
@@ -77,6 +78,7 @@ def create_py_executor(executor_config: ExecutorConfig,
 
     model_engine = PyTorchModelEngine(
         checkpoint_dir,
+        checkpoint,
         pytorch_backend_config,
         batch_size=executor_config.max_batch_size,
         max_num_tokens=executor_config.max_num_tokens,

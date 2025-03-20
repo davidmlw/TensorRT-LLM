@@ -213,6 +213,7 @@ class PyTorchModelEngine(ModelEngine):
     def __init__(
         self,
         model_path: str,
+        checkpoint: dict,
         pytorch_backend_config: PyTorchConfig,
         batch_size: int = 8,
         max_num_tokens: int = 8192,
@@ -248,6 +249,7 @@ class PyTorchModelEngine(ModelEngine):
             mapping=self.mapping,
             attn_backend=attn_backend,
             load_format=pytorch_backend_config.load_format,
+            checkpoint=checkpoint,
         )
         if self.pytorch_backend_config.enable_layerwise_nvtx_marker:
             layerwise_nvtx_marker = LayerwiseNvtxMarker()
@@ -671,7 +673,13 @@ class PyTorchModelEngine(ModelEngine):
                 ub.ub_deallocate(u)
         torch.cuda.empty_cache()
 
-    def _load_model(self, checkpoint_dir: str, load_format: LoadFormat,
+
+    def refit(self, checkpoint: dict):
+        """Refit the model with new checkpoint."""
+        self.model.load_weights(checkpoint)
+        torch.cuda.current_stream().synchronize()
+
+    def _load_model(self, checkpoint_dir: str, load_format: LoadFormat, checkpoint: dict = None,
                     **kwargs):
         config = tensorrt_llm._torch.model_config.ModelConfig.from_pretrained(
             checkpoint_dir, trust_remote_code=True, **kwargs)
@@ -703,12 +711,15 @@ class PyTorchModelEngine(ModelEngine):
                 model = AutoModelForCausalLM.from_config(config)
 
             model.to("cuda")
-
+            
             if load_format == LoadFormat.AUTO:
-                if hasattr(model, 'llm_checkpoint_dir'):
-                    weights = load_weights(model.llm_checkpoint_dir)
+                if checkpoint is None:
+                    if hasattr(model, 'llm_checkpoint_dir'):
+                        weights = load_weights(model.llm_checkpoint_dir)
+                    else:
+                        weights = load_weights(checkpoint_dir)
                 else:
-                    weights = load_weights(checkpoint_dir)
+                    weights = checkpoint
 
                 model.load_weights(weights)
 
