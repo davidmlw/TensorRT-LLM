@@ -17,6 +17,7 @@ import torch
 
 from tensorrt_llm._torch.pyexecutor.resource_manager import ResourceManagerType
 from tensorrt_llm._torch.pyexecutor.seq_slot_manager import SeqSlotManager
+from tensorrt_llm._torch.utils import get_device_uuid
 from tensorrt_llm._utils import (customized_gc_thresholds, global_mpi_rank,
                                  is_trace_enabled, nvtx_range, trace_func)
 from tensorrt_llm.bindings.executor import (DisServingRequestStats,
@@ -33,7 +34,7 @@ from ..distributed import Distributed
 from ..speculative.drafter import Drafter
 from .kv_cache_transceiver import KvCacheTransceiver
 from .llm_request import (ExecutorRequest, LlmRequest, LlmRequestState,
-                          LlmResponse, executor_request_to_llm_request)
+                          LlmResponse, LlmResult, executor_request_to_llm_request)
 from .model_engine import ModelEngine
 from .sampler import Sampler, SampleState, SampleStateTensors, TorchSampler
 from .scheduler import RequestScheduler, ScheduledRequests
@@ -51,6 +52,9 @@ PROFILE_RECORD_GC_ENV_VAR_NAME = "TLLM_PROFILE_RECORD_GC"
 PROFILE_TRACE_ENV_VAR_NAME = "TLLM_TORCH_PROFILE_TRACE"
 
 SHUTDOWN_REQUEST_ID = -1
+UPDATE_WEIGHT_REQUEST_ID = -2
+SLEEP_REQUEST_ID = -3
+WAKEUP_REQUEST_ID = -4
 
 
 @dataclasses.dataclass
@@ -59,6 +63,9 @@ class RequestQueueItem:
     request: Optional[ExecutorRequest] = None
     is_canceled_request: bool = False
     query: Optional[list] = None  # only used in `StarAttention`
+    weight_ipc_handles: Optional[dict] = None
+    sleep_level: Optional[int] = None
+    wakeup_level: Optional[int] = None
 
     @property
     def is_shutdown_request(self):
@@ -66,8 +73,15 @@ class RequestQueueItem:
 
     @property
     def is_normal_request(self):
-        return not (self.is_shutdown_request or self.is_canceled_request)
+        return self.id > 0 and not self.is_canceled_request
+    def is_update_weight_request(self):
+        return self.id == UPDATE_WEIGHT_REQUEST_ID
 
+    def is_sleep_request(self):
+        return self.id == SLEEP_REQUEST_ID
+
+    def is_wakeup_request(self):
+        return self.id == WAKEUP_REQUEST_ID
 
 def _get_from_request_queue(
         request_queue,
@@ -244,6 +258,7 @@ class PyExecutor:
         self.num_fetch_requests_cur_rank = 0
         self.num_fetch_requests = 0
         self.shutdown_event = threading.Event()
+        self.request_accumulator: List[RequestQueueItem] = []
 
         # response used data
         self.response_lock = threading.Lock()
@@ -287,6 +302,8 @@ class PyExecutor:
             self.draft_model_engine.warmup(self.resource_manager)
 
         self.is_shutdown = False
+        self.is_control_request = False
+        self.control_request_id = 0
 
         self.stats_lock = threading.Lock()
         self.stats = []
@@ -465,7 +482,10 @@ class PyExecutor:
 
     def enqueue_request(self,
                         request: ExecutorRequest,
-                        query: Optional[List] = None):
+                        query: Optional[List] = None,
+                        weight_ipc_handles: Optional[dict] = None,
+                        sleep_level: Optional[int] = None,
+                        wakeup_level: Optional[int] = None):
         """
         Enqueue a new request, query is only used in `StarAttention`.
         """
@@ -476,10 +496,17 @@ class PyExecutor:
             if self.enable_iter_perf_stats:
                 self.start_times[req_id] = time.time()
 
-            if query is not None:
+            if weight_ipc_handles is not None:
+                self.request_queue.put(RequestQueueItem(UPDATE_WEIGHT_REQUEST_ID, None, False, None, weight_ipc_handles))
+            elif sleep_level is not None:
+                self.request_queue.put(RequestQueueItem(SLEEP_REQUEST_ID, None, False, None, None, sleep_level))
+            elif wakeup_level is not None:
+                self.request_queue.put(RequestQueueItem(WAKEUP_REQUEST_ID, None, False, None, None, None, wakeup_level))
+            elif query is not None:
                 self.request_queue.put(RequestQueueItem(req_id, request, query))
             else:
                 self.request_queue.put(RequestQueueItem(req_id, request))
+            #self.request_queue.put(RequestQueueItem(req_id, request, False, query, weight_ipc_handles, sleep_level, wakeup_level))
             self.next_req_id += 1
         finally:
             self.enqueue_lock.release()
@@ -756,6 +783,18 @@ class PyExecutor:
                 new_requests = self._fetch_new_requests()
                 if self.should_stop_processing:
                     break
+                if self.is_control_request:
+                    self.is_control_request = False
+                    assert len(new_requests) == 1, f"control request should be the only request in the list, but got {len(new_requests)}"
+                    if (new_requests[0].is_update_weight_request()):
+                        self._update_weight(new_requests[0])
+                    elif (new_requests[0].is_sleep_request()):
+                        self._sleep(new_requests[0])
+                    elif (new_requests[0].is_wakeup_request()):
+                        self._wakeup(new_requests[0])
+                    else:
+                        assert False, "Invalid control request"
+                    continue
 
                 if self.enable_iter_perf_stats:
                     iter_stats = self._get_init_iter_stats(
@@ -907,6 +946,18 @@ class PyExecutor:
                 new_requests = self._fetch_new_requests()
                 if self.should_stop_processing:
                     break
+                if self.is_control_request:
+                    self.is_control_request = False
+                    assert len(new_requests) == 1, f"control request should be the only request in the list, but got {len(new_requests)}"
+                    if (new_requests[0].is_update_weight_request()):
+                        self._update_weight(new_requests[0])
+                    elif (new_requests[0].is_sleep_request()):
+                        self._sleep(new_requests[0])
+                    elif (new_requests[0].is_wakeup_request()):
+                        self._wakeup(new_requests[0])
+                    else:
+                        assert False, "Invalid control request"
+                    continue
 
                 if self.kv_cache_transceiver:
                     self._check_disagg_gen_transfer_status()
@@ -1033,6 +1084,50 @@ class PyExecutor:
             logger.error(f"Encountered an error in decode: {error_msg}")
             self._handle_errors(error_msg)
 
+    def _sleep(self, sleep_request):
+        self.is_sleep_request = False
+        self._enqueue_responses({sleep_request.id: LlmResponse(request_id=sleep_request.id, result=LlmResult(result=None, py_result=None, is_final=True), client_id=sleep_request.id)})
+
+    def _wakeup(self, wakeup_request):
+        self.is_wakeup_request = False
+        self._enqueue_responses({wakeup_request.id: LlmResponse(request_id=wakeup_request.id, result=LlmResult(result=None, py_result=None, is_final=True), client_id=wakeup_request.id)})
+
+    def _update_weight(self, update_weight_request):
+        self.is_update_weight_request = False
+
+        try:
+            # Get handles for this device
+            device_uuid = get_device_uuid(self.device_id)
+            handles = update_weight_request.weight_ipc_handles[device_uuid]
+            weights = {}
+
+            # Process each handle to get the tensor
+            i = 0
+            for name, handle in handles:
+                func, args = handle
+                list_args = list(args)
+                # Update device ID to match the current device
+                list_args[6] = self.device_id
+                tensor = func(*list_args)
+                if i % 2 == 0:
+                    weights[name] = tensor
+                else:
+                    weights[name] = tensor # + 1.0
+                i += 1
+
+            # Load weights into the model
+            self.model_engine.model.load_weights(weights)
+
+            torch.cuda.synchronize()
+            update_weight_response = LlmResponse(request_id=update_weight_request.id, result=LlmResult(result=None, py_result=None, is_final=True),     client_id=update_weight_request.id)
+            self._enqueue_responses({update_weight_request.id: update_weight_response})
+        except Exception as e:
+            print(
+                f"Error in VllmInternalWorkerExtension.update_weights_from_ipc_handles: {e}"
+            )
+            update_weight_response = LlmResponse(request_id=update_weight_request.id, result=LlmResult(result=None, py_result=None, is_final=True), client_id=update_weight_request.id)
+            self._enqueue_responses({update_weight_request.id: update_weight_response})
+
     def _executor_loop_overlap(self):
         torch.cuda.set_device(self.device_id)
         if self.dist.rank == 0 and not self.is_warmup and self.benchmark_req_queues_size > 0 and self.kv_cache_transceiver:
@@ -1052,6 +1147,18 @@ class PyExecutor:
                 new_requests = self._fetch_new_requests()
                 if self.should_stop_processing:
                     break
+                if self.is_control_request:
+                    self.is_control_request = False
+                    assert len(new_requests) == 1, f"control request should be the only request in the list, but got {len(new_requests)}"
+                    if (new_requests[0].is_update_weight_request()):
+                        self._update_weight(new_requests[0])
+                    elif (new_requests[0].is_sleep_request()):
+                        self._sleep(new_requests[0])
+                    elif (new_requests[0].is_wakeup_request()):
+                        self._wakeup(new_requests[0])
+                    else:
+                        assert False, "Invalid control request"
+                    continue
 
                 if self.kv_cache_transceiver:
                     self._check_disagg_gen_transfer_status()
@@ -1263,19 +1370,42 @@ class PyExecutor:
             new_requests, py_request_objects = self._broadcast_new_requests(
                 new_requests, py_request_objects)
 
+        self.request_accumulator.extend(new_requests)
+
         # drop requests arriving after shutdown
         valid_new_requests = []
-        for req_item in new_requests:
+        find_control_request = False
+        for i, req_item in enumerate(self.request_accumulator):
             if req_item.is_shutdown_request:
                 self.is_shutdown = True
+                find_control_request = True
+                break
+            if req_item.is_update_weight_request() or req_item.is_sleep_request() or req_item.is_wakeup_request():
+                find_control_request = True
+                self.control_request_id = req_item.id
                 break
             elif req_item.is_canceled_request:
                 self.canceled_req_ids.append(req_item.id)
+
+        if (find_control_request):
+            if (i==0):
+                if not self.is_shutdown:
+                    valid_new_requests = self.request_accumulator[:1]
+                self.is_control_request = True
+                self.request_accumulator = self.request_accumulator[1:]
+                return valid_new_requests
             else:
-                valid_new_requests.append(req_item)
+                valid_new_requests = self.request_accumulator[:i]
+                self.request_accumulator = self.request_accumulator[i:]
+        else:
+            valid_new_requests = self.request_accumulator
+            self.request_accumulator = []
+
         # Check if the beam width of the requests is equal to the max_beam_width
         for req_item in valid_new_requests:
             assert req_item.request.sampling_config.beam_width == self.max_beam_width, f"Request beam width {req_item.request.sampling_config.beam_width} is not equal to max_beam_width {self.max_beam_width}. This is not supported!"
+
+        new_requests = valid_new_requests
 
         if py_request_objects and (self.dist.tp_size > 1
                                    or self.dist.has_pp) and self.dist.rank > 0:

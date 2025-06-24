@@ -1087,7 +1087,6 @@ class PyTorchModelEngine(ModelEngine):
                     weights = load_weights(model.llm_checkpoint_dir)
                 else:
                     weights = load_weights(checkpoint_dir)
-
                 model.load_weights(weights)
 
                 if self.spec_config is not None and self.spec_config.spec_dec_mode.need_load_draft_weights(

@@ -38,7 +38,7 @@ from .request import (CancellingRequest, GenerationRequest, LoRARequest,
 from .result import (GenerationResult, IterationResult, LogProbsResult,
                      ResponseWrapper, compute_logprobs)
 from .utils import (ErrorResponse, IntraProcessQueue, RequestError,
-                    WorkerCommIpcAddrs, has_event_loop, is_llm_response)
+                    WorkerCommIpcAddrs, has_event_loop, is_llm_response, is_update_weights_response, is_sleep_response, is_wakeup_response)
 
 __all__ = [
     "GenerationExecutorWorker",
@@ -443,7 +443,15 @@ class GenerationExecutorWorker(GenerationExecutor):
                     f"prompt length {splited_prompt_len} plus query length {query_token_len} "
                     f"is larger than max_seq_len {executor_config.max_seq_len}")
             return default_max_tokens
-
+        if request.is_weight_update_request():
+            req_id = self.engine.enqueue_request(request, weight_ipc_handles=request.weight_ipc_handles)
+            return req_id
+        elif request.is_sleep_request():
+            req_id = self.engine.enqueue_request(request, sleep_level=request.sleep_level)
+            return req_id
+        elif request.is_wakeup_request():
+            req_id = self.engine.enqueue_request(request, wakeup_level=request.wakeup_level)
+            return req_id
         try:
             executor_request = tllm.Request(
                 client_id=request.id,
@@ -492,7 +500,6 @@ class GenerationExecutorWorker(GenerationExecutor):
                 lp = request.sampling_params.logits_processor
                 executor_request.py_logits_post_processors = lp if isinstance(
                     lp, list) else [lp]
-
             if request.query_token_ids is not None:
                 # pytorch star attention workflow
                 # a workaround to avoid public interface update
@@ -1008,6 +1015,12 @@ def _send_rsp(
     if is_llm_response(response):
         if response.has_error() or response.result.is_final:
             worker._pop_result(response.client_id)
+    elif is_update_weights_response(response):
+        worker._pop_result(response.client_id)
+    elif is_sleep_response(response):
+        worker._pop_result(response.client_id)
+    elif is_wakeup_response(response):
+        worker._pop_result(response.client_id)
     elif isinstance(response, ErrorResponse):
         worker._pop_result(response.client_id)
     else:

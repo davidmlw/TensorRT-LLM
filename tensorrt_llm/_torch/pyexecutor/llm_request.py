@@ -246,8 +246,9 @@ class LlmResult:
         return getattr(result, item)
 
     def deserialize(self):
-        self._result = tensorrt_llm.bindings.executor.deserialize_result(
-            self._result)
+        if self._result is not None:
+            self._result = tensorrt_llm.bindings.executor.deserialize_result(
+                self._result)
 
 
 @dataclass
