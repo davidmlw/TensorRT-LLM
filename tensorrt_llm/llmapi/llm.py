@@ -121,7 +121,7 @@ class BaseLLM:
 
         self._executor_cls = kwargs.pop("executor_cls", GenerationExecutor)
         self._llm_id = None
-
+        print(f"self._executor_cls: {self._executor_cls}")
         try:
             backend = kwargs.get('backend', None)
             if backend == 'pytorch':
@@ -152,7 +152,7 @@ class BaseLLM:
                 revision=revision,
                 tokenizer_revision=tokenizer_revision,
                 **kwargs)
-
+            print(f"self.args: {self.args}")
         except Exception as e:
             logger.error(
                 f"Failed to parse the arguments for the LLM constructor: {e}")
@@ -592,6 +592,7 @@ class BaseLLM:
                                          llm_build_stats=weakref.proxy(
                                              self.llm_build_stats))
         self._engine_dir, self._hf_model_dir = model_loader()
+        print(f"self._engine_dir: {self._engine_dir}")
         # update the model_dir to a local dir for the runtime, such as tokenizer loading.
         if self._engine_dir is not None:
             self.args.model = self._engine_dir
@@ -702,6 +703,8 @@ class BaseLLM:
         return_logits = (self.args.gather_generation_logits
                          or (self.args.build_config
                              and self.args.build_config.gather_context_logits))
+        print(f"self._executor_cls: {self._executor_cls}")
+        print(f"executor_config: {executor_config}")
 
         self._executor = self._executor_cls.create(
             self._engine_dir,

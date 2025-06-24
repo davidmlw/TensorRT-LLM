@@ -108,6 +108,10 @@ class GenerationExecutor(ABC):
     def abort_request(self, request_id: int) -> None:
         pass
 
+    def update_weights_from_ipc_handles(self, handles: dict) -> None:
+        pass
+
+
     def generate_async(
             self,
             prompt_token_ids: List[int],
@@ -352,6 +356,7 @@ class GenerationExecutor(ABC):
         lora_config: Optional[LoraConfig] = None,
         garbage_collection_gen0_threshold: Optional[int] = None,
     ) -> Union["GenerationExecutorProxy", "GenerationExecutorWorker"]:
+        print(f"GenerationExecutor.create")
         # local imports to avoid cyclic importing
         from .proxy import GenerationExecutorProxy
         from .worker import GenerationExecutorWorker
@@ -389,6 +394,7 @@ class GenerationExecutor(ABC):
         if spawn_workers or (mpirun_launch and reuse_mpi_comm):
             if reuse_mpi_comm:
                 assert mpi_session is not None, "reuse_mpi_comm requires an external MPI session"
+            print(f"GenerationExecutor.create: GenerationExecutorProxy")
             return GenerationExecutorProxy(
                 worker_kwargs,
                 model_world_size=model_world_size,
@@ -406,6 +412,7 @@ class GenerationExecutor(ABC):
             logger.warning(
                 "Using single process worker for TP1, this may hurt streaming generation performance."
             )
+            print(f"GenerationExecutor.create: GenerationExecutorWorker")
             return GenerationExecutorWorker(**worker_kwargs,
                                             is_llm_executor=is_llm_executor,
                                             garbage_collection_gen0_threshold=
@@ -416,6 +423,7 @@ class GenerationExecutor(ABC):
         # While this requires uses to protect their entrypoint to
         # `if __name__ == "__main__":`.
         if not platform.system() == 'Windows':
+            print(f"GenerationExecutor.create: Not Windows: GenerationExecutorProxy")
             return GenerationExecutorProxy(
                 worker_kwargs,
                 model_world_size=model_world_size,
@@ -429,6 +437,7 @@ class GenerationExecutor(ABC):
             # The ProcessPoolExecutorSession is used to support Windows, as mpi4py cannot.
             mpi_session = ProcessPoolExecutorSession(n_workers=1,
                                                      mp_context=ctx)
+            print(f"GenerationExecutor.create: Windows:GenerationExecutorProxy")
             return GenerationExecutorProxy(
                 worker_kwargs,
                 model_world_size=model_world_size,

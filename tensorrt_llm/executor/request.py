@@ -124,3 +124,9 @@ class CancellingRequest:
 
     def __init__(self, id: int):
         self.id = id
+
+class UpdateWeightsFromIPCHandelsRequest:
+    ''' The request to update the weights of the model. '''
+
+    def __init__(self, handles: dict):
+        self.handles = handles

@@ -183,6 +183,7 @@ def create_py_executor(
         engine_dir: str = None,
         lora_config: Optional[LoraConfig] = None,
         garbage_collection_gen0_threshold: Optional[int] = None) -> PyExecutor:
+    print(f"create_py_executor: {engine_dir}, {checkpoint_dir}")
     _mangle_executor_config(executor_config)
     pytorch_backend_config = executor_config.pytorch_backend_config
 

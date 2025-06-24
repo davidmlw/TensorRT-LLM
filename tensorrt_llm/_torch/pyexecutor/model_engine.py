@@ -974,6 +974,7 @@ class PyTorchModelEngine(ModelEngine):
                     moe_load_balancer: Optional[MoeLoadBalancerConfig] = None,
                     lora_config: Optional[LoraConfig] = None,
                     **kwargs):
+        print(f"ModelEngine._load_model: {checkpoint_dir}, {load_format}, {max_num_tokens}, {moe_max_num_tokens}, {moe_load_balancer}, {lora_config}, {kwargs}")
         config = ModelConfig.from_pretrained(
             checkpoint_dir,
             trust_remote_code=True,
@@ -1030,7 +1031,8 @@ class PyTorchModelEngine(ModelEngine):
                     weights = load_weights(model.llm_checkpoint_dir)
                 else:
                     weights = load_weights(checkpoint_dir)
-
+                for key, value in weights.items():
+                    print(f"{key}: {value.shape}, {value.device}")
                 model.load_weights(weights)
 
                 if self.spec_config is not None and self.spec_config.spec_dec_mode.need_load_draft_weights(

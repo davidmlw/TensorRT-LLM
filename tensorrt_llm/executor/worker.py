@@ -34,7 +34,7 @@ from .ipc import FusedIpcQueue, IpcQueue
 from .postproc_worker import (PostprocParams, PostprocWorker,
                               PostprocWorkerConfig, postproc_worker_main)
 from .request import (CancellingRequest, GenerationRequest, LoRARequest,
-                      PromptAdapterRequest)
+                      PromptAdapterRequest, UpdateWeightsFromIPCHandelsRequest)
 from .result import (GenerationResult, IterationResult, LogProbsResult,
                      ResponseWrapper, compute_logprobs)
 from .utils import (ErrorResponse, IntraProcessQueue, RequestError,
@@ -527,6 +527,10 @@ class GenerationExecutorWorker(GenerationExecutor):
 
         return result
 
+    def update_weights_from_ipc_handles(self, handles: dict):
+        ##self.engine.update_weights_from_ipc_handles(handles)
+        print(f"Worker update_weights_from_ipc_handles: ")
+
     def _pop_result(self, client_id: int):
         self._results.pop(client_id, None)
         self._client_id_to_request_id.pop(client_id, None)
@@ -751,7 +755,9 @@ def worker_main(
                                                    kv_cache_events_queue)
                 worker_init_status_queue.put(ready_signal)
                 while (req := request_queue.get()) is not None:
-                    if isinstance(req, CancellingRequest):
+                    if isinstance(req, UpdateWeightsFromIPCHandelsRequest):
+                        worker.update_weights_from_ipc_handles(req.handles)
+                    elif isinstance(req, CancellingRequest):
                         worker.abort_request(req.id)
                     elif isinstance(req, GenerationRequest):
                         try:
