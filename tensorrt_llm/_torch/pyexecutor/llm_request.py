@@ -163,7 +163,8 @@ class PyResult:
                  return_log_probs: bool = False,
                  return_context_logits: bool = False,
                  return_generation_logits: bool = False,
-                 exclude_last_generation_logits: bool = False):
+                 exclude_last_generation_logits: bool = False,
+                 success: bool = False):
         self._streaming = streaming
         self._context_logits = LogitsStorage(
             prompt_len, use_device_memory) if return_context_logits else None
@@ -171,6 +172,7 @@ class PyResult:
             max_new_tokens, use_device_memory, exclude_last_generation_logits
         ) if return_generation_logits else None
         self._log_probs = LogProbStorage() if return_log_probs else None
+        self._success = success
 
     def append_context_logits(self, context_logits: torch.Tensor):
         if self._context_logits:

@@ -34,7 +34,7 @@ from ..distributed import Distributed
 from ..speculative.drafter import Drafter
 from .kv_cache_transceiver import KvCacheTransceiver
 from .llm_request import (ExecutorRequest, LlmRequest, LlmRequestState,
-                          LlmResponse, LlmResult, executor_request_to_llm_request)
+                          LlmResponse, LlmResult, executor_request_to_llm_request, PyResult)
 from .model_engine import ModelEngine
 from .sampler import Sampler, SampleState, SampleStateTensors, TorchSampler
 from .scheduler import RequestScheduler, ScheduledRequests
@@ -1086,11 +1086,11 @@ class PyExecutor:
 
     def _sleep(self, sleep_request):
         self.is_sleep_request = False
-        self._enqueue_responses({sleep_request.id: LlmResponse(request_id=sleep_request.id, result=LlmResult(result=None, py_result=None, is_final=True), client_id=sleep_request.id)})
+        self._enqueue_responses({sleep_request.id: LlmResponse(request_id=sleep_request.id, result=LlmResult(result=None, py_result=PyResult(0, 0, success=True), is_final=True), client_id=sleep_request.id)})
 
     def _wakeup(self, wakeup_request):
         self.is_wakeup_request = False
-        self._enqueue_responses({wakeup_request.id: LlmResponse(request_id=wakeup_request.id, result=LlmResult(result=None, py_result=None, is_final=True), client_id=wakeup_request.id)})
+        self._enqueue_responses({wakeup_request.id: LlmResponse(request_id=wakeup_request.id, result=LlmResult(result=None, py_result=PyResult(0, 0, success=True), is_final=True), client_id=wakeup_request.id)})
 
     def _update_weight(self, update_weight_request):
         self.is_update_weight_request = False
@@ -1119,13 +1119,13 @@ class PyExecutor:
             self.model_engine.model.load_weights(weights)
 
             torch.cuda.synchronize()
-            update_weight_response = LlmResponse(request_id=update_weight_request.id, result=LlmResult(result=None, py_result=None, is_final=True),     client_id=update_weight_request.id)
+            update_weight_response = LlmResponse(request_id=update_weight_request.id, result=LlmResult(result=None, py_result=PyResult(0, 0, success=True), is_final=True),     client_id=update_weight_request.id)
             self._enqueue_responses({update_weight_request.id: update_weight_response})
         except Exception as e:
             print(
                 f"Error in VllmInternalWorkerExtension.update_weights_from_ipc_handles: {e}"
             )
-            update_weight_response = LlmResponse(request_id=update_weight_request.id, result=LlmResult(result=None, py_result=None, is_final=True), client_id=update_weight_request.id)
+            update_weight_response = LlmResponse(request_id=update_weight_request.id, result=LlmResult(result=None, py_result=PyResult(0, 0, success=False), is_final=True), client_id=update_weight_request.id)
             self._enqueue_responses({update_weight_request.id: update_weight_response})
 
     def _executor_loop_overlap(self):
