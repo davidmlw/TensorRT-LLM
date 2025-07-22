@@ -1102,18 +1102,13 @@ class PyExecutor:
             weights = {}
 
             # Process each handle to get the tensor
-            i = 0
             for name, handle in handles:
                 func, args = handle
                 list_args = list(args)
                 # Update device ID to match the current device
                 list_args[6] = self.device_id
                 tensor = func(*list_args)
-                if i % 2 == 0:
-                    weights[name] = tensor
-                else:
-                    weights[name] = tensor # + 1.0
-                i += 1
+                weights[name] = tensor
 
             # Load weights into the model
             self.model_engine.model.load_weights(weights)
@@ -1123,10 +1118,11 @@ class PyExecutor:
             self._enqueue_responses({update_weight_request.id: update_weight_response})
         except Exception as e:
             print(
-                f"Error in VllmInternalWorkerExtension.update_weights_from_ipc_handles: {e}"
+                f"Error in update_weights_from_ipc_handles: {e}"
             )
-            update_weight_response = LlmResponse(request_id=update_weight_request.id, result=LlmResult(result=None, py_result=PyResult(0, 0, success=False), is_final=True), client_id=update_weight_request.id)
-            self._enqueue_responses({update_weight_request.id: update_weight_response})
+            raise e
+            #update_weight_response = LlmResponse(request_id=update_weight_request.id, result=LlmResult(result=None, py_result=PyResult(0, 0, success=False), is_final=True), client_id=update_weight_request.id)
+            #self._enqueue_responses({update_weight_request.id: update_weight_response})
 
     def _executor_loop_overlap(self):
         torch.cuda.set_device(self.device_id)

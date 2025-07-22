@@ -43,63 +43,6 @@ def exit_distributed():
     """Exit distributed training"""
     if dist.is_initialized():
         dist.destroy_process_group()
-
-@contextlib.contextmanager
-def nvml_context() -> Generator[None, None, None]:
-    """Context manager for NVML initialization and shutdown.
-
-    Raises:
-        RuntimeError: If NVML initialization fails
-    """
-    try:
-        pynvml.nvmlInit()
-        yield
-    except pynvml.NVMLError as e:
-        raise RuntimeError(f"Failed to initialize NVML: {e}")
-    finally:
-        try:
-            pynvml.nvmlShutdown()
-        except:
-            pass
-
-def device_id_to_physical_device_id(device_id: int) -> int:
-    """Convert a logical device ID to a physical device ID considering CUDA_VISIBLE_DEVICES."""
-    if "CUDA_VISIBLE_DEVICES" in os.environ:
-        device_ids = os.environ["CUDA_VISIBLE_DEVICES"].split(",")
-        try:
-            physical_device_id = int(device_ids[device_id])
-            return physical_device_id
-        except ValueError:
-            raise RuntimeError(
-                f"Failed to convert logical device ID {device_id} to physical device ID. Available devices are: {device_ids}."
-            )
-    else:
-        return device_id
-
-def get_device_uuid(device_idx: int) -> str:
-    """Get the UUID of a CUDA device using NVML."""
-    # Convert logical device index to physical device index
-    global_device_idx = device_id_to_physical_device_id(device_idx)
-
-    # Get the device handle and UUID
-    with nvml_context():
-        try:
-            handle = pynvml.nvmlDeviceGetHandleByIndex(global_device_idx)
-            uuid = pynvml.nvmlDeviceGetUUID(handle)
-            # Ensure the UUID is returned as a string, not bytes
-            if isinstance(uuid, bytes):
-                return uuid.decode("utf-8")
-            elif isinstance(uuid, str):
-                return uuid
-            else:
-                raise RuntimeError(
-                    f"Unexpected UUID type: {type(uuid)} for device {device_idx} (global index: {global_device_idx})"
-                )
-        except pynvml.NVMLError as e:
-            raise RuntimeError(
-                f"Failed to get device UUID for device {device_idx} (global index: {global_device_idx}): {e}"
-            )
-
 class fsdp_interface:
     def __init__(self, model_dir):
         self.model_dir = model_dir
@@ -163,7 +106,7 @@ class fsdp_interface:
         Returns:
             str: UUID of the device in the format "GPU-xxxxx"
         """
-
+        from tensorrt_llm._torch.utils import get_device_uuid
         # Get current device index from torch
         device_idx = torch.cuda.current_device()
         # Get device UUID using NVML
@@ -213,7 +156,8 @@ class fsdp_interface:
         converted_params = {}
         for key in keys:
             # Get full_tensor for dtensor (GPU > 1)
-            print(f"key: {key}")
+            if not key.startswith("model."):
+                continue
             tensor = self._held_sharded_state_dict_reference[key]
             if isinstance(tensor, DTensor):
                 full_tensor = tensor.full_tensor()
@@ -256,7 +200,10 @@ class trtllm_interface:
                 tensor_parallel_size=tensor_parallel_size,
                 #disable_overlap_scheduler=True,
                 #load_format='auto'
-                #load_format='dummy'
+                load_format='dummy',
+                kv_cache_config=KvCacheConfig(
+                    enable_block_reuse=False
+                )
             )
         else:
             return None
