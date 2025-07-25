@@ -3,7 +3,7 @@ import torch
 import torch.distributed as dist
 import atexit
 import os
-from typing import Any
+from typing import Any, Optional
 from tensorrt_llm import SamplingParams
 from tensorrt_llm import LLM
 from tensorrt_llm.llmapi.llm_args import KvCacheConfig
@@ -16,10 +16,6 @@ from torch.distributed.fsdp import (
 )
 #from torch.distributed.fsdp.api import ShardedStateDictConfig, StateDictType
 from transformers import AutoModelForCausalLM, AutoTokenizer
-
-import contextlib
-from typing import Generator
-import pynvml
 
 
 def init_distributed():
@@ -129,15 +125,29 @@ class fsdp_interface:
                 self._held_sharded_state_dict_reference = self.model.state_dict()
 
         # Collect info for streaming multiple tensors
-        state_dict_info = []
+        ### state_dict_info = []
+        ### for name, tensor in self._held_sharded_state_dict_reference.items():
+        ###     # dtensor's numel will return complete tensor instead of only local tensor
+        ###     size_in_bytes = tensor.element_size() * tensor.numel()
+        ###     state_dict_info.append((name, size_in_bytes))
+        self.refit_param_info = []
         for name, tensor in self._held_sharded_state_dict_reference.items():
             # dtensor's numel will return complete tensor instead of only local tensor
             size_in_bytes = tensor.element_size() * tensor.numel()
-            state_dict_info.append((name, size_in_bytes))
+            self.refit_param_info.append((name, size_in_bytes))
 
+        from tensorrt_llm._torch.utils import get_free_memory_bytes
         #print(f"State dict info: {state_dict_info}")
+        # Collect current available memory for refit
+        ## Get current device index from torch
+        device_idx = torch.cuda.current_device()
+        ## Get device free memory using NVML
+        total_available_bytes = get_free_memory_bytes(device_idx)
+        ## Use 80% of the free memory for safety
+        memory_ratio = os.getenv("NRL_REFIT_BUFFER_MEMORY_RATIO", "0.8")
+        total_available_bytes *= float(memory_ratio)
 
-        return state_dict_info
+        return self.refit_param_info, total_available_bytes
 
     @torch.no_grad()
     def get_weights_ipc_handles(self, keys: list[str]) -> dict[str, Any]:
@@ -183,6 +193,44 @@ class fsdp_interface:
         print(f"device_uuid: {device_uuid}")
         return {device_uuid: all_handles}
 
+    @torch.no_grad()
+    def prepare_weights_for_ipc_refit(
+        self, _refit_buffer_size_gb: Optional[int] = None
+    ) -> list[list[str]]:
+        """Prepare the weights for IPC.
+
+        Returns:
+            list: A list containing the keys of the parameters, which is grouped by size.
+        """
+        # Get the state_dict_info and available memory from all workers
+        state_dict_info = self.refit_param_info
+
+        if _refit_buffer_size_gb is not None:
+            total_available_bytes = _refit_buffer_size_gb * (1024**3)
+        else:
+            # Get the minimum available memory from all workers
+            total_available_bytes = min(result[1] for result in state_dict_info)
+
+        # Group tensors by size
+        cur_available_bytes = total_available_bytes
+        grouped_param_keys: list[list[str]] = []
+        keys: list[str] = []
+
+        for key, size_in_bytes in state_dict_info:
+            if size_in_bytes > cur_available_bytes:
+                if keys:
+                    grouped_param_keys.append(keys)
+                    keys = []
+                cur_available_bytes = total_available_bytes
+
+            keys.append(key)
+            cur_available_bytes -= size_in_bytes
+
+        if keys:
+            grouped_param_keys.append(keys)
+
+        return grouped_param_keys
+
 class trtllm_interface:
     def __init__(self, model_dir, tensor_parallel_size):
         self.world_size = dist.get_world_size()
@@ -202,6 +250,7 @@ class trtllm_interface:
                 #load_format='auto'
                 load_format='dummy',
                 kv_cache_config=KvCacheConfig(
+                    free_gpu_memory_fraction=0.85,
                     enable_block_reuse=False
                 )
             )
@@ -251,22 +300,8 @@ def main():
     fsdp = fsdp_interface(args.model_dir)
     trtllm = trtllm_interface(args.model_dir, args.tensor_parallel_size)
 
-    grouped_param_keys = [key for key,size in fsdp.prepare_weights_for_ipc()]
-    handles = fsdp.get_weights_ipc_handles(grouped_param_keys)
-    #print(f"handles: {handles}")
-
-    # Collect handles from all ranks
-    all_handles = [None for _ in range(world_size)]
-    dist.all_gather_object(all_handles, handles)
-    all_handles = {k: v for d in all_handles for k, v in d.items()}
-    print(f"all_handles: {all_handles.keys()}")
-
     if rank == 0:
         print(f"Collected handles from all {world_size} ranks:")
-
-    # Now all_handles contains the handles from each rank
-    # all_handles[0] = handles from rank 0
-    # all_handles[1] = handles from rank 1, etc.
 
     # For FSDP mode, we would need additional logic to integrate withTensorRT-LLM
     # This is a placeholder for now
@@ -286,9 +321,34 @@ def main():
         result = trtllm.llm.wakeup()
         print(f"wakeup result: {result}")
 
-        result = trtllm.llm.update_weights_from_ipc_handles(all_handles)
-        print(f"update weights result: {result}")
+    dict_info, total_available_bytes = fsdp.prepare_weights_for_ipc()
 
+    grouped_param_keys = fsdp.prepare_weights_for_ipc_refit(0.5)
+    total_num_keys = sum(len(k) for k in grouped_param_keys)
+    print(
+        f"[Refit] Split {total_num_keys} keys into {len(grouped_param_keys)} groups"
+    )
+
+    from tensorrt_llm._torch.utils import get_free_memory_bytes
+    for keys in grouped_param_keys:
+        handles = fsdp.get_weights_ipc_handles(keys)
+        #print(f"handles: {handles}")
+
+        # Collect handles from all ranks
+        all_handles = [None for _ in range(world_size)]
+        dist.all_gather_object(all_handles, handles)
+        all_handles = {k: v for d in all_handles for k, v in d.items()}
+        #print(f"all_handles: {all_handles.keys()}")
+
+        device_idx = torch.cuda.current_device()
+        total_available_bytes = get_free_memory_bytes(device_idx)
+        print(f"total_available_bytes: {total_available_bytes}")
+
+        if rank == 0:
+            result = trtllm.llm.update_weights_from_ipc_handles(all_handles)
+            print(f"update weights result: {result}")
+
+    if rank == 0:
         outputs = trtllm.llm.generate(prompts, sampling_params)
         for i, output in enumerate(outputs):
             prompt = output.prompt
@@ -299,4 +359,5 @@ def main():
 if __name__ == '__main__':
     main()
 
-# torchrun --nproc_per_node=2 generate.py --model_dir /model/Qwen2.5-0.5B-Instruct --tensor_parallel_size 2
+# torchrun --nproc_per_node=2 tests/unittest/llmapi/test_llm_update_weights.py --model_dir /model/Qwen2.5-0.5B-Instruct --tensor_parallel_size 2
+# torchrun --nproc_per_node=2 tests/unittest/llmapi/test_llm_update_weights.py --model_dir /model/Qwen2.5-3B-Instruct/ --tensor_parallel_size 2
