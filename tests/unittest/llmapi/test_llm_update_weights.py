@@ -251,7 +251,7 @@ class trtllm_interface:
                 load_format='dummy',
                 kv_cache_config=KvCacheConfig(
                     free_gpu_memory_fraction=0.85,
-                    enable_block_reuse=False
+                    # enable_block_reuse=False
                 )
             )
         else:

@@ -1084,12 +1084,15 @@ class PyExecutor:
             logger.error(f"Encountered an error in decode: {error_msg}")
             self._handle_errors(error_msg)
 
+    def reset_prefix_cache(self):
+        self.kv_cache_manager.reset_reuse_state()
+
     def update_weights(self, weights):
         # Load weights into the model
         self.model_engine.model.load_weights(weights)
         torch.cuda.synchronize()
 
-        # TODO: reset prefix cache
+        self.reset_prefix_cache()
 
     def update_weight_from_ipc_handles(self, handles):
         """
