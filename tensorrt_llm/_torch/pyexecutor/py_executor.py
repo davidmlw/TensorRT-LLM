@@ -1094,17 +1094,17 @@ class PyExecutor:
     def update_weight_from_ipc_handles(self, handles):
         """
         Update model weights from IPC handles.
-        
+
         Args:
             ipc_handles (dict): Dictionary mapping device UUIDs to parameter IPC handles.
                 {device_uuid: all_handles}
         """
         from tensorrt_llm._torch.utils import get_device_uuid
         device_uuid = get_device_uuid(self.device_id)
-        
+
         if device_uuid not in handles:
             raise ValueError(f"Device UUID {device_uuid} not found in ipc_handles")
-            
+
         try:
             weights = {}
             all_handles = handles[device_uuid]
@@ -1117,10 +1117,10 @@ class PyExecutor:
                 weights[param_name] = tensor
 
             self.update_weights(weights)
-                
+
         except Exception as e:
             logger.error(f"failed to update weights from ipc handles: {e}")
-            return False
+            raise e
 
     def _sleep(self, sleep_request):
         self.is_sleep_request = False
