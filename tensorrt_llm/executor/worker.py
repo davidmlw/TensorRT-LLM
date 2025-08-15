@@ -460,13 +460,13 @@ class GenerationExecutorWorker(GenerationExecutor):
                     f"is larger than max_seq_len {executor_config.max_seq_len}")
             return default_max_tokens
         if request.is_weight_update_request():
-            req_id = self.engine.enqueue_request(request, weight_ipc_handles=request.weight_ipc_handles)
+            req_id = self.engine.enqueue_update_weight_request(request.id, weight_ipc_handles=request.weight_ipc_handles)
             return req_id
         elif request.is_sleep_request():
-            req_id = self.engine.enqueue_request(request, sleep_level=request.sleep_level)
+            req_id = self.engine.enqueue_sleep_request(request.id, sleep_level=request.sleep_level)
             return req_id
         elif request.is_wakeup_request():
-            req_id = self.engine.enqueue_request(request, wakeup_level=request.wakeup_level)
+            req_id = self.engine.enqueue_wakeup_request(request.id, wakeup_level=request.wakeup_level)
             return req_id
         try:
             executor_request = tllm.Request(
