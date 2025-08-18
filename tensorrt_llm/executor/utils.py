@@ -147,7 +147,7 @@ class WorkerCommIpcAddrs(NamedTuple):
 
 
 def is_llm_response(instance):
-    return hasattr(instance, "result") and hasattr(instance, "request_id") and instance.request_id > 0
+    return hasattr(instance, "result") and hasattr(instance, "request_id") and instance.request_id >= 0
 
 def is_update_weights_response(instance):
     return hasattr(instance, "result") and hasattr(instance, "request_id") and instance.request_id == -2

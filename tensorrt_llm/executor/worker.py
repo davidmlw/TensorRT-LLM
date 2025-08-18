@@ -39,8 +39,6 @@ from .result import (GenerationResult, IterationResult, LogProbsResult,
                      ResponseWrapper, compute_logprobs)
 from .utils import (ErrorResponse, IntraProcessQueue, RequestError,
                     WorkerCommIpcAddrs, has_event_loop, is_llm_response, is_update_weights_response, is_sleep_response, is_wakeup_response)
-from .._torch.virtual_memory import (materialize_with_tag,
-                                     release_with_tag)
 
 __all__ = [
     "GenerationExecutorWorker",
@@ -545,18 +543,6 @@ class GenerationExecutorWorker(GenerationExecutor):
         except Exception as e:
             raise RequestError(str(e)) from e
 
-    @staticmethod
-    def sleep(*tags: str):
-        torch.cuda.synchronize()
-        release_with_tag(*tags)
-        torch.cuda.synchronize()
-
-    @staticmethod
-    def wakeup(*tags: str):
-        torch.cuda.synchronize()
-        materialize_with_tag(*tags)
-        torch.cuda.synchronize()
-
     def submit(self, request: GenerationRequest) -> GenerationResult:
         """ Low-level API to the executor. Return a "future" GenerationResult which can be waited. """
         self.start()
@@ -953,7 +939,6 @@ class AwaitResponseHelper:
         rsp_batch = [] if not self.enable_postprocprocess_parallel else None
 
         for response in responses:
-
             if self.worker._has_background_error():
                 response = self.worker._create_error_response(response)
             elif response.has_error():
