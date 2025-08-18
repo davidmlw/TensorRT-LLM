@@ -241,6 +241,7 @@ std::vector<uintptr_t> CudaVirtualMemoryManager::retrieveBadHandles() noexcept
 
 size_t CudaVirtualMemoryManager::releaseWithTag(std::string const& tag)
 {
+    TLLM_LOG_INFO("CudaVirtualMemoryManager, releaseWithTag %s", tag.c_str());
     std::unique_lock lock(mMutex);
 
     std::exception_ptr ePtr{};
@@ -253,6 +254,7 @@ size_t CudaVirtualMemoryManager::releaseWithTag(std::string const& tag)
         ++it; // element referenced by `it` will be invalidated by unsafeRemove(handle)
         if (memory.status() == CUDAVirtualMemoryChunk::MATERIALIZED)
         {
+            TLLM_LOG_INFO("CudaVirtualMemoryManager, release 0x%016x with tag %s", handle, tag.c_str());
             if (!safe_invoke_helper(ePtr,
                     "Multiple exceptions thrown during releaseWithTag. The previous exception is: %s",
                     &CUDAVirtualMemoryChunk::release, &memory))
@@ -274,6 +276,7 @@ size_t CudaVirtualMemoryManager::releaseWithTag(std::string const& tag)
 
 size_t CudaVirtualMemoryManager::materializeWithTag(std::string const& tag)
 {
+    TLLM_LOG_INFO("CudaVirtualMemoryManager, materializeWithTag %s", tag.c_str());
     std::unique_lock lock(mMutex);
 
     auto [begin, end] = mEntries.equal_range(tag);
@@ -285,6 +288,7 @@ size_t CudaVirtualMemoryManager::materializeWithTag(std::string const& tag)
     {
         for (; it != end; ++it)
         {
+            TLLM_LOG_INFO("CudaVirtualMemoryManager, materialize 0x%016x with tag %s", it->second->first, tag.c_str());
             auto& memory = it->second->second.mMemory;
             if (memory.status() == CUDAVirtualMemoryChunk::RELEASED)
             {
@@ -376,6 +380,8 @@ void CudaVirtualMemoryAllocator::allocate(Pointer* ptr, std::size_t n, int devic
         std::move(configurators));
 
     *ptr = deviceptr_cast(address);
+
+    TLLM_LOG_INFO("CudaVirtualMemoryAllocator, allocating %zu bytes @ 0x%16x with tag %s", n, address, mConfig->mTag.c_str());
 }
 
 void CudaVirtualMemoryAllocator::deallocate(Pointer ptr, std::size_t n) const
