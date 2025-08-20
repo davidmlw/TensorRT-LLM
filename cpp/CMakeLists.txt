@@ -44,7 +44,7 @@ option(ENABLE_MULTI_DEVICE
        "Enable building with multi device support (requires NCCL, MPI,...)" ON)
 option(ENABLE_UCX "Enable building with UCX (Uniform Communication X) support"
        ON)
-option(NVRTC_DYNAMIC_LINKING "Link against the dynamic NVRTC libraries" OFF)
+option(NVRTC_DYNAMIC_LINKING "Link against the dynamic NVRTC libraries" ON)
 option(ENABLE_NVSHMEM "Enable building with NVSHMEM support" OFF)
 option(USING_OSS_CUTLASS_LOW_LATENCY_GEMM
        "Using open sourced Cutlass low latency gemm kernel" ON)

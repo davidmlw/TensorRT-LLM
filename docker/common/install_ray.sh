@@ -12,6 +12,10 @@ apt-get update && \
     apt-get install -y tini aria2 fish sudo && \
     apt-get clean
 
+apt-get remove -y ibverbs-providers libibverbs1
+apt-get install -y libibverbs-dev
+apt-get remove --purge --allow-change-held-packages cuda-nvrtc-dev-12-9
+
 # Change pip source
 pip config set global.index-url "${PIP_INDEX}" && \
     pip config set global.extra-index-url "${PIP_INDEX}" && \
