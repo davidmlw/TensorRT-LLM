@@ -1104,8 +1104,6 @@ class PyExecutor:
             raise e
 
     def _sleep(self, sleep_request):
-        self.is_sleep_request = False
-        torch.cuda.synchronize()
         if (sleep_request.sleep_level == 1):
             tags = ("model",)
         elif (sleep_request.sleep_level == 2):
@@ -1113,13 +1111,13 @@ class PyExecutor:
         else:
             tags = ("model", "draft_model", "kv_cache", "spec", "drafter", "extra")
         print(f"PyExecutor sleep: {tags}")
-        release_with_tag(*tags)
-        torch.cuda.synchronize()
+        ## mute sleep now until new torch version is released
+        ## torch.cuda.synchronize()
+        ## release_with_tag(*tags)
+        ## torch.cuda.synchronize()
         self._enqueue_responses([(sleep_request.id, LlmResponse(request_id=sleep_request.id, result=LlmResult(result=None, py_result=PyResult(0, 0, success=True), is_final=True), client_id=sleep_request.id))])
 
     def _wakeup(self, wakeup_request):
-        self.is_wakeup_request = False
-        torch.cuda.synchronize()
         if (wakeup_request.wakeup_level == 1):
             tags = ("model",)
         elif (wakeup_request.wakeup_level == 2):
@@ -1127,8 +1125,10 @@ class PyExecutor:
         else:
             tags = ("model", "draft_model", "kv_cache", "spec", "drafter", "extra")
         print(f"PyExecutor wakeup: {tags}")
-        materialize_with_tag(*tags)
-        torch.cuda.synchronize()
+        ## mute wakeup now until new torch version is released
+        ## torch.cuda.synchronize()
+        ## materialize_with_tag(*tags)
+        ## torch.cuda.synchronize()
         self._enqueue_responses([(wakeup_request.id, LlmResponse(request_id=wakeup_request.id, result=LlmResult(result=None, py_result=PyResult(0, 0, success=True), is_final=True), client_id=wakeup_request.id))])
 
     def _update_weight(self, update_weight_request):
