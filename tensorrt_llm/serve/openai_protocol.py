@@ -3,7 +3,7 @@
 import base64
 import time
 import uuid
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union, Tuple
 
 import torch
 import xgrammar

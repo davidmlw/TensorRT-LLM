@@ -600,7 +600,8 @@ class AllReduce(nn.Module):
 
         self.mapping = mapping
         self.workspace = None
-        self.strategy = strategy
+        # self.strategy = strategy
+        self.strategy = AllReduceStrategy.NCCL
         self.mnnvl_allreduce = None
         self._disable_mpi = mpi_disabled()
 

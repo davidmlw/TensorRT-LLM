@@ -45,11 +45,7 @@ class RpcWorkerMixin:
             self.rpc_server = RPCServer(self, num_workers=num_workers, hmac_key=self.hmac_key)
             self.rpc_server.bind(self.rpc_addr)
             self.rpc_server.start()
-
     def submit(self, request: GenerationRequest):
-        """Submits a request to the worker."""
-        with nvtx_range_debug("RpcWorker.submit", color="blue", category="Worker"):
-            logger_debug(f"[worker] Submitting request {request.id}", color="green")
             super().submit(request)
             logger_debug(f"[worker] Submitted request {request.id}", color="green")
 

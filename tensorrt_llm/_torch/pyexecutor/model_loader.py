@@ -289,7 +289,11 @@ class ModelLoader:
                         model.draft_model, model.draft_config)
 
                     self._call_load_weights(model.load_draft_weights, weights,
+<<<<<<< HEAD
                                             draft_weight_mapper)
+=======
+                                            self.weight_mapper)
+>>>>>>> 5ebfe9501 (fix race condition)
 
             elif load_format == LoadFormat.DUMMY:
                 self.weight_mapper = checkpoint_loader.get_initialized_weight_mapper(
