@@ -35,7 +35,9 @@ from tensorrt_llm.serve.openai_protocol import (ChatCompletionRequest,
                                                 CompletionResponseChoice,
                                                 ErrorResponse, ModelCard,
                                                 ModelList, UsageInfo,
-                                                to_llm_disaggregated_params)
+                                                to_llm_disaggregated_params,
+                                                MemoryUpdateRequest,
+                                                UpdateWeightsRequest)
 from tensorrt_llm.serve.postprocess_handlers import (
     ChatPostprocArgs, CompletionPostprocArgs, chat_response_post_processor,
     chat_stream_post_processor, completion_response_post_processor,
@@ -151,6 +153,15 @@ class OpenAIServer:
         self.app.add_api_route("/v1/chat/completions",
                                self.openai_chat,
                                methods=["POST"])
+        self.app.add_api_route("/release_memory",
+                                self.release_memory,
+                                methods=["POST"])
+        self.app.add_api_route("/resume_memory",
+                                self.resume_memory,
+                                methods=["POST"])
+        self.app.add_api_route("/update_weights",
+                                self.update_weights,
+                                methods=["POST"])
 
     async def health(self) -> Response:
         return Response(status_code=200)
@@ -459,6 +470,18 @@ class OpenAIServer:
         except Exception as e:
             logger.error(traceback.format_exc())
             return self.create_error_response(str(e))
+
+    async def release_memory(self, request: MemoryUpdateRequest) -> JSONResponse:
+        await self.llm.sleep_async(level=2)
+        return JSONResponse(content={"status": "success"})
+
+    async def resume_memory(self, request: MemoryUpdateRequest) -> JSONResponse:
+        await self.llm.wakeup_async(level=2)
+        return JSONResponse(content={"status": "success"})
+
+    async def update_weights(self, request: UpdateWeightsRequest) -> JSONResponse:
+        await self.llm.update_weights_from_ipc_handles_async(request.weights)
+        return JSONResponse(content={"status": "success"})
 
     async def __call__(self, host, port):
         # Store the binding address for server registration

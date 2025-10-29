@@ -3,7 +3,7 @@
 import base64
 import time
 import uuid
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union, Tuple
 
 import torch
 from openai.types.chat import \
@@ -625,6 +625,14 @@ class ChatCompletionRequest(OpenAIBaseModel):
         if data.get("suffix"):
             raise ValueError("suffix is not supported")
         return data
+
+
+class MemoryUpdateRequest(OpenAIBaseModel):
+    tags: List[str] = Field(default=["model", "kv_cache"])
+
+
+class UpdateWeightsRequest(OpenAIBaseModel):
+    weights: Dict[str, List[Tuple[str, str]]]
 
 
 def encode_opaque_state(opaque_state: Optional[bytes]) -> Optional[str]:

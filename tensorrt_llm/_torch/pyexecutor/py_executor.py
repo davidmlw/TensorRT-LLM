@@ -9,6 +9,7 @@ import traceback
 import weakref
 from contextlib import contextmanager
 from typing import Dict, Iterable, List, Optional, Tuple, Union
+import pickle, base64
 
 import torch
 from cuda import cudart
@@ -1091,7 +1092,7 @@ class PyExecutor:
             all_handles = handles[device_uuid]
 
             for param_name, tensor_handle in all_handles:
-                func, args = tensor_handle
+                func, args = pickle.loads(base64.b64decode(tensor_handle))
                 list_args = list(args)
                 list_args[6] = self.device_id  # Set target device
                 tensor = func(*list_args)
