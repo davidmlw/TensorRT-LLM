@@ -10,6 +10,7 @@ import traceback
 import weakref
 from contextlib import contextmanager
 from typing import Dict, Iterable, List, Optional, Tuple, Union
+import pickle, base64
 
 import torch
 
@@ -1286,6 +1287,91 @@ class PyExecutor:
             logger.error(f"Encountered an error in decode: {error_msg}")
             self._handle_errors(error_msg)
 
+<<<<<<< HEAD
+=======
+    def update_weights(self, weights):
+        # Load weights into the model
+        self.model_engine.model.load_weights(weights)
+        torch.cuda.synchronize()
+
+        # TODO: reset prefix cache
+
+    def update_weight_from_ipc_handles(self, handles):
+        """
+        Update model weights from IPC handles.
+
+        Args:
+            ipc_handles (dict): Dictionary mapping device UUIDs to parameter IPC handles.
+                {device_uuid: all_handles}
+        """
+        from tensorrt_llm._torch.utils import get_device_uuid
+        device_uuid = get_device_uuid(self.device_id)
+
+        if device_uuid not in handles:
+            raise ValueError(f"Device UUID {device_uuid} not found in ipc_handles")
+
+        try:
+            weights = {}
+            all_handles = handles[device_uuid]
+
+            for param_name, tensor_handle in all_handles:
+                func, args = pickle.loads(base64.b64decode(tensor_handle))
+                list_args = list(args)
+                list_args[6] = self.device_id  # Set target device
+                tensor = func(*list_args)
+                weights[param_name] = tensor
+
+            self.update_weights(weights)
+
+        except Exception as e:
+            logger.error(f"failed to update weights from ipc handles: {e}")
+            raise e
+
+    def _sleep(self, sleep_request):
+        if (sleep_request.sleep_level == 1):
+            tags = ("model",)
+        elif (sleep_request.sleep_level == 2):
+            tags = ("model", "kv_cache")
+        else:
+            tags = ("model", "draft_model", "kv_cache", "spec", "drafter", "extra")
+        print(f"PyExecutor sleep: {tags}")
+        ## mute sleep now until new torch version is released
+        ## torch.cuda.synchronize()
+        ## release_with_tag(*tags)
+        ## torch.cuda.synchronize()
+        self._enqueue_responses([(sleep_request.id, LlmResponse(request_id=sleep_request.id, result=LlmResult(result=None, py_result=PyResult(0, 0, success=True), is_final=True), client_id=sleep_request.id))])
+
+    def _wakeup(self, wakeup_request):
+        if (wakeup_request.wakeup_level == 1):
+            tags = ("model",)
+        elif (wakeup_request.wakeup_level == 2):
+            tags = ("model", "kv_cache")
+        else:
+            tags = ("model", "draft_model", "kv_cache", "spec", "drafter", "extra")
+        print(f"PyExecutor wakeup: {tags}")
+        ## mute wakeup now until new torch version is released
+        ## torch.cuda.synchronize()
+        ## materialize_with_tag(*tags)
+        ## torch.cuda.synchronize()
+        self._enqueue_responses([(wakeup_request.id, LlmResponse(request_id=wakeup_request.id, result=LlmResult(result=None, py_result=PyResult(0, 0, success=True), is_final=True), client_id=wakeup_request.id))])
+
+    def _update_weight(self, update_weight_request):
+        self.is_update_weight_request = False
+
+        try:
+            print(f"update_weight_from_ipc_handles: update_weight_request.id: {update_weight_request.id}")
+            self.update_weight_from_ipc_handles(update_weight_request.weight_ipc_handles)
+            update_weight_response = LlmResponse(request_id=update_weight_request.id, result=LlmResult(result=None, py_result=PyResult(0, 0, success=True), is_final=True),     client_id=update_weight_request.id)
+            self._enqueue_responses([(update_weight_request.id, update_weight_response)])
+        except Exception as e:
+            print(
+                f"Error in update_weights_from_ipc_handles: {e}"
+            )
+            raise e
+            #update_weight_response = LlmResponse(request_id=update_weight_request.id, result=LlmResult(result=None, py_result=PyResult(0, 0, success=False), is_final=True), client_id=update_weight_request.id)
+            #self._enqueue_responses({update_weight_request.id: update_weight_response})
+
+>>>>>>> 4428f1634 (server mode)
     def _handle_control_request(self):
         if len(self.active_requests) == 0 and \
             self.executor_request_queue.get_waiting_queue_size() == 0 and \
