@@ -189,11 +189,7 @@ class BaseLLM:
         self.mpi_session = self.args.mpi_session
 
         if self.args.parallel_config.is_multi_gpu:
-<<<<<<< HEAD
-            if get_device_count(
-=======
             if os.getenv("RAY_LOCAL_WORLD_SIZE") is None and get_device_count(
->>>>>>> 80550c288 (rebase to the updated verl)
             ) < self.args.parallel_config.world_size_per_node:
                 raise RuntimeError(
                     f"Only {get_device_count()} GPUs are available, but {self.args.parallel_config.world_size} are required."
