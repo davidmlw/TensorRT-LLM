@@ -812,7 +812,6 @@ class OpenAIServer:
             logger.error(traceback.format_exc())
             return self.create_error_response(str(e))
 
-<<<<<<< HEAD
     async def chat_harmony(self, request: ChatCompletionRequest, raw_request: Request) -> Response:
         """
         Chat Completion API with harmony format support.
@@ -991,19 +990,39 @@ class OpenAIServer:
 
         return JSONResponse(content={"detail": "None"})
 
-=======
     async def release_memory(self, request: MemoryUpdateRequest) -> JSONResponse:
-        await self.llm.sleep_async(level=2)
+        #await self.llm.sleep_async(level=2)
+
+        tags = ["sampler",
+            "drafter",
+            "guided_decoder",
+            "spec_resource_manager",
+            "_no_capture_model_extra",
+            "executor_extra",
+            "kv_cache",
+            "model",
+            "draft_model"]
+        await self.llm._collective_rpc('sleep', args=(tags,))
         return JSONResponse(content={"status": "success"})
 
     async def resume_memory(self, request: MemoryUpdateRequest) -> JSONResponse:
-        await self.llm.wakeup_async(level=2)
+        #await self.llm.wakeup_async(level=2)
+        tags = ["sampler",
+            "drafter",
+            "guided_decoder",
+            "spec_resource_manager",
+            "_no_capture_model_extra",
+            "executor_extra",
+            "kv_cache",
+            "model",
+            "draft_model"]
+        await self.llm._collective_rpc('wakeup', args=(tags,))
         return JSONResponse(content={"status": "success"})
 
     async def update_weights(self, request: UpdateWeightsRequest) -> JSONResponse:
-        await self.llm.update_weights_from_ipc_handles_async(request.weights)
+        #await self.llm.update_weights_from_ipc_handles_async(request.weights)
+        await self.llm._collective_rpc('update_weights', args=(request.weights,))
         return JSONResponse(content={"status": "success"})
->>>>>>> 4428f1634 (server mode)
 
     async def __call__(self, host, port):
         # Store the binding address for server registration
