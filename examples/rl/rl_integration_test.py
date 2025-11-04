@@ -344,8 +344,9 @@ class trtllm_interface:
                     model=model_dir,
                     tensor_parallel_size=tensor_parallel_size,
                     orchestrator_type='ray',
-                    ray_worker_extension_cls='tensorrt_llm.rlhf_utils.WorkerExtension',
+                    ray_worker_extension_cls='tensorrt_llm.llmapi.rlhf_utils.UpdateWeightsWorkerExtension',
                     load_format='dummy',
+                    enable_sleep=True,
                     kv_cache_config=KvCacheConfig(
                         free_gpu_memory_fraction=0.85,
                         enable_block_reuse=False

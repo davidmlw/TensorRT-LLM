@@ -48,7 +48,7 @@ from tensorrt_llm.serve.openai_protocol import (ChatCompletionRequest,
                                                 ErrorResponse, ModelCard,
                                                 ModelList, PromptTokensDetails,
                                                 ResponsesRequest, UsageInfo,
-                                                to_llm_disaggregated_params
+                                                to_llm_disaggregated_params,
                                                 MemoryUpdateRequest,
                                                 UpdateWeightsRequest)
 from tensorrt_llm.serve.postprocess_handlers import (
@@ -258,6 +258,15 @@ class OpenAIServer:
         self.app.add_api_route("/v1/responses",
                                self.openai_responses,
                                methods=["POST"])
+        self.app.add_api_route("/release_memory",
+                                self.release_memory,
+                                methods=["POST"])
+        self.app.add_api_route("/resume_memory",
+                                self.resume_memory,
+                                methods=["POST"])
+        self.app.add_api_route("/update_weights",
+                                self.update_weights,
+                                methods=["POST"])
         if self.llm.args.return_perf_metrics:
             # register /prometheus/metrics
             self.mount_metrics()

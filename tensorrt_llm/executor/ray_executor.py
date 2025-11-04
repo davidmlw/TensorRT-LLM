@@ -1,4 +1,5 @@
 import os
+import asyncio
 from typing import Any, Dict, List, Optional, Tuple
 
 try:
@@ -93,7 +94,7 @@ class RayExecutor(GenerationExecutor):
             self.response_queue.warmup.remote()
             self.response_sync_queue.warmup.remote()
 
-            worker_kwargs = dict(**worker_kwargs,
+            self.worker_kwargs = dict(**worker_kwargs,
                                  postproc_worker_config=postproc_worker_config,
                                  is_llm_executor=is_llm_executor)
 
@@ -103,6 +104,15 @@ class RayExecutor(GenerationExecutor):
             self.shutdown()
             logger.error(f"Failed to initialize RayExecutor: {e}")
             raise e
+    def init_workers(self):
+        #import asyncio
+        #loop = asyncio.get_event_loop()
+        #asyncio.run(loop.create_task(self.create_workers(RayGPUWorker, self.worker_kwargs)))
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(self.create_workers, RayGPUWorker, self.worker_kwargs)
+            # This will block but in a thread-safe way
+            future.result()
 
     @staticmethod
     def create_actor_weak_ref(actor_handle: ray.actor.ActorHandle):
@@ -142,7 +152,10 @@ class RayExecutor(GenerationExecutor):
         ]
 
         try:
+            #raise Exception(f"david: before self.workers.__ray_ready__")
             ray.get([worker.__ray_ready__.remote() for worker in self.workers])
+            #await asyncio.gather(*[worker.__ray_ready__.remote() for worker in self.workers])
+            #raise Exception(f"david: ray.get([worker.__ray_ready__.remote() for worker in self.workers]) {self.workers}")
         except ray.exceptions.ActorDiedError as e:
             if "The actor died because of an error raised in its creation task" in str(
                     e):
@@ -160,10 +173,12 @@ class RayExecutor(GenerationExecutor):
                 for worker in workers
             ]
         else:
-            return ray.get([
+            result = ray.get([
                 getattr(worker, func).remote(*args, **kwargs)
                 for worker in workers
             ])
+            raise Exception(f"david: result {result}")
+            return result
 
     @unwrap_ray_errors()
     def collective_rpc(self,

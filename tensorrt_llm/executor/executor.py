@@ -370,11 +370,13 @@ class GenerationExecutor(ABC):
     ):
         from .ray_executor import RayExecutor
 
-        return RayExecutor(worker_kwargs,
+        ray_executor = RayExecutor(worker_kwargs,
                            model_world_size=model_world_size,
                            postproc_worker_config=postproc_worker_config,
                            is_llm_executor=is_llm_executor,
                            tp_size=tp_size)
+        #ray_executor.init_workers()
+        return ray_executor
 
     @staticmethod
     def _create_rpc_executor(
