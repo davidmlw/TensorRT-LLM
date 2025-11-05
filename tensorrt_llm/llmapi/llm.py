@@ -176,6 +176,7 @@ class BaseLLM:
                 tokenizer_revision=tokenizer_revision,
                 **kwargs)
 
+
         except Exception as e:
             logger.error(
                 f"Failed to parse the arguments for the LLM constructor: {e}")
@@ -1127,3 +1128,10 @@ LLM.__doc__ = \
 
     Parameters:
 """ + TORCH_LLM_DOCSTRING
+
+class AsyncLLM(LLM):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    async def async_init_phase(self):
+        await self._executor.init_workers_async()

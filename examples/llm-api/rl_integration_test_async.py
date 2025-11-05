@@ -5,10 +5,11 @@ import contextlib
 import torch.distributed as dist
 import atexit
 import os
+import asyncio
 from typing import Any, Optional, Generator
 
 from tensorrt_llm import SamplingParams
-from tensorrt_llm import LLM
+from tensorrt_llm import AsyncLLM
 from tensorrt_llm.llmapi.llm_args import KvCacheConfig
 from torch.distributed.fsdp import (
     FullyShardedDataParallel as FSDP,
@@ -22,6 +23,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from torch.distributed.tensor import DTensor
 import torch.multiprocessing as mp
 from tensorrt_llm._utils import get_free_port
+from rlhf_utils import WorkerExtension
 
 def init_distributed():
     """Initialize distributed training"""
@@ -55,7 +57,9 @@ def report_device_id() -> str:
     # Get current device index from torch
     device_idx = torch.cuda.current_device()
     # Get device UUID using NVML
-    return get_device_uuid(device_idx)
+    uuid = get_device_uuid(device_idx)
+    print(f"fsdp: id: {device_idx}, uuid: {uuid}")
+    return uuid
 
 @contextlib.contextmanager
 def nvml_context() -> Generator[None, None, None]:
@@ -325,11 +329,13 @@ class trtllm_interface:
         self.device = torch.device(f"cuda:{self.rank}")
         self.model_dir = model_dir
         self.tensor_parallel_size = tensor_parallel_size
-        self.llm = self.load_trtllm_model(model_dir, tensor_parallel_size)
 
-    def load_trtllm_model(self, model_dir, tensor_parallel_size):
+    async def init_trtllm(self):
+        self.llm = await self.load_trtllm_model(self.model_dir, self.tensor_parallel_size)
+
+    async def load_trtllm_model(self, model_dir, tensor_parallel_size):
         if self.rank == 0:
-            print("Loading TensorRT-LLM model")
+            print(f"Loading TensorRT-LLM model: {model_dir}, tensor_parallel_size: {tensor_parallel_size}")
             # Save and clear distributed environment variables to avoid conflicts
             # Ray orchestrator will set up its own process group in separate actors
             saved_env = {}
@@ -340,17 +346,19 @@ class trtllm_interface:
                     del os.environ[var]
 
             try:
-                llm = LLM(
+                llm = AsyncLLM(
                     model=model_dir,
                     tensor_parallel_size=tensor_parallel_size,
                     orchestrator_type='ray',
-                    ray_worker_extension_cls='tensorrt_llm.rlhf_utils.WorkerExtension',
+                    ray_worker_extension_cls='rlhf_utils.WorkerExtension',
                     load_format='dummy',
+                    #enable_sleep=True, # crash
                     kv_cache_config=KvCacheConfig(
                         free_gpu_memory_fraction=0.85,
                         enable_block_reuse=False
                     )
                 )
+                await llm.async_init_phase()
             finally:
                 # Restore environment variables
                 for var, value in saved_env.items():
@@ -498,13 +506,14 @@ def cleanup():
         print(f"Cleaning up process group on rank {dist.get_rank()}")
         dist.destroy_process_group()
 
-def worker(rank, world_size, master_port, model_dir, tensor_parallel_size, use_fsdp):
+async def async_worker(rank, world_size, model_dir, tensor_parallel_size, use_fsdp):
+    #os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3,4,5,6,7"
+    #os.environ["TRTLLM_RAY_BUNDLE_INDICES"] = "1,2,3,4,5,6,7"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+    os.environ["TRTLLM_RAY_BUNDLE_INDICES"] = "1,2"
+    #os.environ["TRTLLM_RAY_PER_WORKER_GPUS"] = "1"
 
-    os.environ["MASTER_ADDR"] = "127.0.0.1"
-    os.environ["MASTER_PORT"] = str(master_port)
-    os.environ["RANK"] = str(rank)
-    os.environ["WORLD_SIZE"] = str(world_size)
-    os.environ["LOCAL_RANK"] = str(rank)
+    """Async worker function that runs the actual test logic within an event loop."""
     prompts = [
         "Hello, my name is",
         "The president of the United States is",
@@ -521,6 +530,7 @@ def worker(rank, world_size, master_port, model_dir, tensor_parallel_size, use_f
             "kv_cache",
             "model",
             "draft_model"]
+
     world_size, rank, device = init_distributed()
 
     sampling_params = SamplingParams(max_tokens=32)
@@ -528,6 +538,7 @@ def worker(rank, world_size, master_port, model_dir, tensor_parallel_size, use_f
     # Load FSDP model
     fsdp = fsdp_interface(model_dir)
     trtllm = trtllm_interface(model_dir, tensor_parallel_size)
+    await trtllm.init_trtllm()
 
     if rank == 0:
         print(f"Collected handles from all {world_size} ranks:")
@@ -535,56 +546,76 @@ def worker(rank, world_size, master_port, model_dir, tensor_parallel_size, use_f
     # For FSDP mode, we would need additional logic to integrate withTensorRT-LLM
     # This is a placeholder for now
     if rank == 0:
-        outputs = trtllm.llm.generate(prompts, sampling_params)
-        for i, output in enumerate(outputs):
-            prompt = output.prompt
-            generated_text = output.outputs[0].text
-            print(f"[{i}] Prompt: {prompt!r}, Generated text: {generated_text!r}")
+        for prompt in prompts:
+            outputs = await trtllm.llm.generate_async(prompt, sampling_params)
+            generated_text = outputs.outputs[0].text
+            print(f"Prompt: {prompt!r}, Generated text: {generated_text!r}")
 
         ## load the model from fsdp
         ## then generate the output again
-        get_current_mem_info("Before sleep")
-        result = trtllm.llm._collective_rpc('sleep', args=(tags,))
-        print(f"sleep result: {result}")
-        get_current_mem_info("After sleep")
-
-        result = trtllm.llm._collective_rpc('wakeup', args=(tags,))
-        print(f"wakeup result: {result}")
-        get_current_mem_info("After wakeup")
+        ## get_current_mem_info("Before sleep")
+        ## result = trtllm.llm._collective_rpc('sleep', args=(tags,))
+        ## print(f"sleep result: {result}")
+        ## get_current_mem_info("After sleep")
+##
+        ## result = trtllm.llm._collective_rpc('wakeup', args=(tags,))
+        ## print(f"wakeup result: {result}")
+        ## get_current_mem_info("After wakeup")
 
     trtllm.update_weights_from_tensor_generator(fsdp.per_tensor_generator())
 
     # generate the output again
     if rank == 0:
-        outputs = trtllm.llm.generate(prompts, sampling_params)
-        for i, output in enumerate(outputs):
-            prompt = output.prompt
-            generated_text = output.outputs[0].text
-            print(f"[{i}] Prompt: {prompt!r}, Generated text: {generated_text!r}")
+        for prompt in prompts:
+            outputs = await trtllm.llm.generate_async(prompt, sampling_params)
+            generated_text = outputs.outputs[0].text
+            print(f"Prompt: {prompt!r}, Generated text: {generated_text!r}")
 
         ## load the model from fsdp
         ## then generate the output again
-        get_current_mem_info("Before sleep")
-        result = trtllm.llm._collective_rpc('sleep', args=(tags,))
-        print(f"sleep result: {result}")
-        get_current_mem_info("After sleep")
+        ## get_current_mem_info("Before sleep")
+        ## result = trtllm.llm._collective_rpc('sleep', args=(tags,))
+        ## print(f"sleep result: {result}")
+        ## get_current_mem_info("After sleep")
+##
+        ## result = trtllm.llm._collective_rpc('wakeup', args=(tags,))
+        ## print(f"wakeup result: {result}")
+        ## get_current_mem_info("After wakeup")
 
-        result = trtllm.llm._collective_rpc('wakeup', args=(tags,))
-        print(f"wakeup result: {result}")
-        get_current_mem_info("After wakeup")
 
-
-    trtllm.update_weights_from_tensor_generator(fsdp.per_tensor_generator())
-
-    # generate the output again
-    if rank == 0:
-        outputs = trtllm.llm.generate(prompts, sampling_params)
-        for i, output in enumerate(outputs):
-            prompt = output.prompt
-            generated_text = output.outputs[0].text
-            print(f"[{i}] Prompt: {prompt!r}, Generated text: {generated_text!r}")
-
+    ##trtllm.update_weights_from_tensor_generator(fsdp.per_tensor_generator())
+##
+    ### generate the output again
+    ##if rank == 0:
+    ##    outputs = trtllm.llm.generate(prompts, sampling_params)
+    ##    for i, output in enumerate(outputs):
+    ##        prompt = output.prompt
+    ##        generated_text = output.outputs[0].text
+    ##        print(f"[{i}] Prompt: {prompt!r}, Generated text: {generated_text!r}")
+##
     exit_distributed()
+
+def worker(rank, world_size, master_port, model_dir, tensor_parallel_size, use_fsdp):
+    """Worker process entry point that sets up environment and runs async event loop."""
+    # Set up environment variables for distributed training
+    os.environ["MASTER_ADDR"] = "127.0.0.1"
+    os.environ["MASTER_PORT"] = str(master_port)
+    os.environ["RANK"] = str(rank)
+    os.environ["WORLD_SIZE"] = str(world_size)
+    os.environ["LOCAL_RANK"] = str(rank)
+
+    # Create a new event loop for this process
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    try:
+        # Run the async worker function
+        loop.run_until_complete(
+            async_worker(rank, world_size, model_dir, tensor_parallel_size, use_fsdp)
+        )
+    finally:
+        # Clean up the event loop
+        loop.close()
 
 def main():
     parser = argparse.ArgumentParser(
@@ -607,12 +638,11 @@ def main():
 
     args = parser.parse_args()
 
-    world_size = 2
+    world_size = args.tensor_parallel_size
     master_port = get_free_port()
     mp.spawn(worker, args=(world_size, master_port, args.model_dir, args.tensor_parallel_size, args.use_fsdp), nprocs=world_size, join=True)
 
 if __name__ == '__main__':
     main()
 
-# python rl_integration_test.py --model_dir /model/Qwen2.5-0.5B-Instruct --tensor_parallel_size 2
-# python rl_integration_test.py --model_dir /model/Qwen2.5-3B-Instruct/ --tensor_parallel_size 2
+#python3 examples/llm-api/rl_integration_test_async.py --model_dir /model/Qwen2.5-0.5B-Instruct --tensor_parallel_size 2
