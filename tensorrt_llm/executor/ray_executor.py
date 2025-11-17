@@ -38,12 +38,17 @@ class RayExecutor(RpcExecutorMixin, GenerationExecutor):
                  model_world_size: int,
                  postproc_worker_config: PostprocWorkerConfig,
                  is_llm_executor: bool,
-                 tp_size=1):
+                 tp_size=1,
+                 placement_share: float = 1.0,
+                 placement_where: list[tuple[PlacementGroup, list[int]]] = None):
         os.environ['RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES'] = '1'
         os.environ["RAY_DEDUP_LOGS"] = "0"  # for debug
 
         super().__init__(model_world_size, postproc_worker_config,
                          is_llm_executor)
+
+        self.placement_share = placement_share
+        self.placement_where = placement_where
 
         self.has_start_local_cluser = False
         runtime_env = {
@@ -98,11 +103,6 @@ class RayExecutor(RpcExecutorMixin, GenerationExecutor):
             raise e
 
     def create_workers(self, worker_cls, worker_kwargs):
-        # When set to be a fraction, it allows Ray to schedule
-        # multiple actors on a single GPU for colocate use cases.
-        num_gpus = float(os.getenv("TRTLLM_RAY_PER_WORKER_GPUS", "1.0"))
-        logger.debug(f"{num_gpus=} for each worker.")
-
         runtime_env = ray.runtime_env.RuntimeEnv()
         runtime_env["env_vars"] = os.environ.copy()
         runtime_env["env_vars"].update({
@@ -111,19 +111,22 @@ class RayExecutor(RpcExecutorMixin, GenerationExecutor):
             "MASTER_PORT": str(self.master_port)
         })
 
-        self.placement_group, self.bundle_indices = self._get_placement_group(
-            tp_size=self.tp_size)
-
-        self.workers = [
-            RayWorkerWrapper.options(
-                num_gpus=num_gpus,
-                runtime_env=runtime_env,  # per-actor env
-                scheduling_strategy=PlacementGroupSchedulingStrategy(
-                    placement_group=self.placement_group,
-                    placement_group_bundle_index=self.bundle_indices[rank],
-                )).remote(worker_cls, worker_kwargs, self.world_size, rank)
-            for rank in range(self.world_size)
-        ]
+        rank = 0
+        placement_where = self.placement_where or [self._get_placement_group(tp_size=self.tp_size)]
+        self.world_size = sum(len(bundle_indices) for _, bundle_indices in placement_where)
+        self.workers = []
+        for pg, bundle_indices in placement_where:
+            for bundle_index in bundle_indices:
+                self.workers.append(
+                    RayWorkerWrapper.options(
+                        num_gpus=self.placement_share,
+                        runtime_env=runtime_env,  # per-actor env
+                        scheduling_strategy=PlacementGroupSchedulingStrategy(
+                            placement_group=pg,
+                            placement_group_bundle_index=bundle_index,
+                        )).remote(worker_cls, worker_kwargs, self.world_size, rank)
+                )
+                rank += 1
 
     def init_workers_sync(self):
         self.create_workers(RayGPUWorker, self.worker_kwargs)
