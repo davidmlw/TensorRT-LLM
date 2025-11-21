@@ -1010,34 +1010,6 @@ class _TorchLLM(BaseLLM):
                          backend=backend,
                          **kwargs)
 
-    @set_api_status("prototype")
-    def _collective_rpc(self,
-                        method: str,
-                        args: tuple[Any, ...] = (),
-                        kwargs: Optional[dict] = None,
-                        non_block: bool = False,
-                        unique_reply_rank: Optional[int] = None) -> list[Any]:
-        """
-        Execute an RPC call on all GPU workers. Currently, this is only supported for RayExecutor.
-
-        Args:
-            method (str): The name of the worker method to execute.
-            args (tuple[Any, ...]): Positional arguments to pass to the worker method. Defaults to ().
-            kwargs (dict, optional): Keyword arguments to pass to the worker method. Defaults to None.
-            non_block (bool): Whether to block until all workers have completed the RPC call. Defaults to False.
-            unique_reply_rank (int, optional): The rank of the worker that will be used to send the reply. Defaults to None.
-
-        Returns:
-            list[Any]: A list of results from each worker.
-        """
-        if hasattr(self._executor, 'collective_rpc'):
-            return self._executor.collective_rpc(method, args, kwargs,
-                                                 non_block, unique_reply_rank)
-        else:
-            raise ValueError(
-                f"Executor type {type(self._executor)} does not support collective RPC."
-            )
-
     def _build_model(self):
         super()._build_model()
         assert self._engine_dir is None
@@ -1126,7 +1098,9 @@ LLM.__doc__ = \
     Parameters:
 """ + TORCH_LLM_DOCSTRING
 
+
 class AsyncLLM(LLM):
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
