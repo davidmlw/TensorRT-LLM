@@ -55,6 +55,11 @@ class Eagle3Attention(Attention):
         # Override the QKV projection. The number of input features
         # is twice as big for EAGLE3 draft models.
         if not self._next_layer_regular:
+            qkv_shard_indices_mapping = {
+                "q": (0, self.q_size),
+                "k": (self.q_size, self.kv_size),
+                "v": (self.q_size + self.kv_size, self.kv_size),
+            }
             self.qkv_proj = Linear(
                 2 * self.hidden_size,
                 tp_size * self.q_size + 2 * tp_size * self.kv_size,
@@ -67,6 +72,7 @@ class Eagle3Attention(Attention):
                 quant_config=model_config.get_quant_config(),
                 skip_create_weights_in_init=model_config.
                 skip_create_weights_in_init,
+                fused_weight_shard_indices_mapping=qkv_shard_indices_mapping,
             )
 
 
@@ -449,6 +455,7 @@ class MTPDraftModel(nn.Module):
         hidden_states: torch.Tensor,
         attn_metadata: AttentionMetadata,
         all_rank_num_tokens: Optional[List[int]] = None,
+        spec_metadata: Optional[SpecMetadata] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         hidden_states = self.layers(
@@ -458,6 +465,7 @@ class MTPDraftModel(nn.Module):
             embed_tokens=self.embed_tokens,
             attn_metadata=attn_metadata,
             all_rank_num_tokens=all_rank_num_tokens,
+            spec_metadata=spec_metadata,
         )
 
         return hidden_states
@@ -512,6 +520,7 @@ class MTPDraftModelForCausalLM(DecoderModelForCausalLM[MTPDraftModel,
             hidden_states=hidden_states,
             attn_metadata=attn_metadata,
             all_rank_num_tokens=attn_metadata.all_rank_num_tokens,
+            spec_metadata=spec_metadata,
             **kwargs)
         return self.logits_processor.forward(
             output,
@@ -548,11 +557,11 @@ class SpecDecOneEngineForCausalLM(DecoderModelForCausalLM[TModel, TConfig],
                          hidden_size=model_config.pretrained_config.hidden_size,
                          vocab_size=model_config.pretrained_config.vocab_size)
         self.draft_model = None
+        self.draft_config = None
         spec_config = getattr(model_config, 'spec_config', None)
         if spec_config and spec_config.spec_dec_mode.use_one_engine():
-            draft_config = None
             if spec_config.spec_dec_mode.is_eagle3_one_model():
-                draft_config = ModelConfig.from_pretrained(
+                self.draft_config = ModelConfig.from_pretrained(
                     model_config.spec_config.speculative_model_dir,
                     trust_remote_code=True,
                     attn_backend=model_config.attn_backend,
@@ -561,17 +570,17 @@ class SpecDecOneEngineForCausalLM(DecoderModelForCausalLM[TModel, TConfig],
                     spec_config=model_config.spec_config,
                     max_num_tokens=model_config.max_num_tokens,
                     moe_max_num_tokens=model_config.moe_max_num_tokens)
-                draft_config.quant_config.kv_cache_quant_algo = \
+                self.draft_config.quant_config.kv_cache_quant_algo = \
                 model_config.quant_config.kv_cache_quant_algo
 
-            self.draft_model = get_draft_model(model_config, draft_config,
+            self.draft_model = get_draft_model(model_config, self.draft_config,
                                                self.lm_head, self.model)
             self.spec_worker = get_spec_worker(model_config.spec_config,
                                                model_config,
                                                model_config.mapping)
 
-            if draft_config is not None:
-                for key, value in draft_config.extra_attrs.items():
+            if self.draft_config is not None:
+                for key, value in self.draft_config.extra_attrs.items():
                     assert key in ('attn_layers', 'mla_layers')
                     assert key in model_config.extra_attrs
                     model_config.extra_attrs[key].update(value)
@@ -642,10 +651,12 @@ class SpecDecOneEngineForCausalLM(DecoderModelForCausalLM[TModel, TConfig],
 
     def load_weights(self,
                      weights: Dict,
-                     weight_mapper: Optional[BaseWeightMapper] = None):
+                     weight_mapper: Optional[BaseWeightMapper] = None,
+                     allow_partial_loading: bool = False):
         super().load_weights(weights=weights,
                              weight_mapper=weight_mapper,
-                             skip_modules=["draft_model"])
+                             skip_modules=["draft_model"],
+                             allow_partial_loading=allow_partial_loading)
 
     def load_draft_weights(self,
                            weights: Dict,

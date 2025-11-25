@@ -1,8 +1,9 @@
+import copy
 import math
 import pickle  # nosec B403
 from abc import ABC, abstractmethod
 from functools import wraps
-from typing import Optional
+from typing import List, Optional
 
 import numpy as np
 import torch
@@ -341,9 +342,24 @@ class MPIDist(Distributed):
 
     def __init__(self, mapping: Mapping):
         super().__init__(mapping)
+        self.create_cp_comm()
+        # Repurpose CP ranks to TP for Helix so that the right comms are created.
+        mapping_with_cp = None
+        if self.mapping.has_cp_helix():
+            logger.info(
+                f"[MPIDist::__init__] Repurposing CP ranks to TP for Helix.")
+            mapping_with_cp = copy.deepcopy(self.mapping)
+            self.mapping = self.mapping.repurpose_helix_cp_to_tp()
+
         self.create_tp_comm()
         self.create_pp_comm()
-        self.create_cp_comm()
+
+        # Restore the original mapping.
+        if mapping_with_cp is not None:
+            logger.info(
+                f"[MPIDist::__init__] Restoring original mapping undoing Helix manipulation."
+            )
+            self.mapping = mapping_with_cp
 
     def broadcast(self, obj, root=0, chunk_size: int = 4 * 1024 * 1024):
         comm = mpi_comm()
@@ -832,3 +848,19 @@ def pp_recv(tensor):
 def pp_send(tensor):
     """Send tensors to next pp rank."""
     _pp_comm.send(tensor)
+
+
+@torch.library.custom_op("trtllm::pp_recv_tensors", mutates_args=("tensors", ))
+def pp_recv_tensors(tensors: List[torch.Tensor]) -> None:
+    """
+    Receive tensors from previous pp rank.
+    """
+    for tensor in tensors:
+        pp_recv(tensor)
+
+
+@torch.library.custom_op("trtllm::pp_send_tensors", mutates_args=("tensors", ))
+def pp_send_tensors(tensors: List[torch.Tensor]) -> None:
+    """Send tensors to next pp rank."""
+    for tensor in tensors:
+        pp_send(tensor)
