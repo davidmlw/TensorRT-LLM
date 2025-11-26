@@ -339,11 +339,12 @@ static void* deviceptr_cast(CUdeviceptr ptr)
 void CudaVirtualMemoryAllocator::allocate(Pointer* ptr, std::size_t n, int device) const
 {
     CUdeviceptr address{};
-    std::size_t const pageAlignedSize = mConfig->pageAligned(n);
-    TLLM_CU_CHECK(cuMemAddressReserve(&address, pageAlignedSize, 0, {}, 0));
+    std::size_t const pageAlignedSize = mConfig->pageAligned(n, device);
+    TLLM_CU_CHECK_WITH_INFO(cuMemAddressReserve(&address, pageAlignedSize, 0, {}, 0),
+        "allocating %zu bytes of address space", pageAlignedSize);
 
     CUDAVirtualMemoryChunk::Configurators configurators;
-    configurators.push_back(std::make_unique<UnicastConfigurator>(address, n,
+    configurators.push_back(std::make_unique<UnicastConfigurator>(address, pageAlignedSize,
         CUmemAccessDesc{{
                             CU_MEM_LOCATION_TYPE_DEVICE,
                             device,
@@ -372,7 +373,7 @@ void CudaVirtualMemoryAllocator::allocate(Pointer* ptr, std::size_t n, int devic
                                                  CU_MEM_LOCATION_TYPE_DEVICE,
                                                  device,
                                              }},
-            n),
+            pageAlignedSize),
         std::move(configurators));
 
     *ptr = deviceptr_cast(address);
