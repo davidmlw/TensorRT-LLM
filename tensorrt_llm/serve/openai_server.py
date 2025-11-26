@@ -1007,7 +1007,7 @@ class OpenAIServer:
             "kv_cache",
             "model",
             "draft_model"]
-        #self.llm._collective_rpc('sleep', args=(tags,))
+        self.llm._collective_rpc('sleep', args=(tags,))
         print(f"HTTP received: release_memory {tags}")
         return JSONResponse(content={"status": "success"})
 
@@ -1022,7 +1022,7 @@ class OpenAIServer:
             "kv_cache",
             "model",
             "draft_model"]
-        #self.llm._collective_rpc('wakeup', args=(tags,))
+        self.llm._collective_rpc('wakeup', args=(tags,))
         print(f"HTTP received: resume_memory {tags}")
         return JSONResponse(content={"status": "success"})
 
