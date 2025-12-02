@@ -444,9 +444,9 @@ class PyTorchModelEngine(ModelEngine):
 
         if self._disable_mpi and self.dist.tp_size > 1:
             random_name = uuid.uuid4()
-            barrier_shm_file = self.dist.broadcast(
+            barrier_shm_file = self.dist.tp_broadcast(
                 f"/tensorrt_llm@request_queue_barrier@{random_name}" if self.
-                dist.rank == 0 else None)
+                dist.tp_rank == 0 else None)
             print(f"LocalNodeBarrier created at {barrier_shm_file}")
             self.local_node_barrier = LocalNodeBarrier(barrier_shm_file)
         else:
