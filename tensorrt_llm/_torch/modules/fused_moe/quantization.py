@@ -338,11 +338,8 @@ class FusedMoEMethodBase(ABC):
             additional_kargs["allow_partial_loading"] = allow_partial_loading
 
         self.load_expert_weights_to_dst(
-            module,
-            weights,
-            weight_loading_mode,
-            module.initial_local_expert_ids,
-            module.w3_w1_weight.data,
+            module, weights, weight_loading_mode,
+            module.initial_local_expert_ids, module.w3_w1_weight.data,
             module.w2_weight.data,
             module.w3_w1_bias.data if module.bias else None,
             module.w2_bias.data if module.bias else None, **additional_kargs)
@@ -400,11 +397,8 @@ class FusedMoEMethodBase(ABC):
                     setattr(module, 'local_shared_w2_bias_tensors',
                             local_shared_w2_bias_tensors)
             self.load_expert_weights_to_dst(
-                module,
-                weights,
-                weight_loading_mode,
-                local_shared_load_expert_ids,
-                local_shared_w3_w1_tensors,
+                module, weights, weight_loading_mode,
+                local_shared_load_expert_ids, local_shared_w3_w1_tensors,
                 local_shared_w2_tensors,
                 local_shared_w3_w1_bias_tensors if module.bias else None,
                 local_shared_w2_bias_tensors if module.bias else None,

@@ -141,8 +141,8 @@ private:
 };
 
 template <typename T>
-void checkDriver(T result, CUDADriverWrapper const& wrap, char const* const func, char const* const file,
-    int const line, char const* info = nullptr)
+void checkDriver(
+    T result, CUDADriverWrapper const& wrap, char const* const func, char const* const file, int const line)
 {
     if (result)
     {
@@ -150,13 +150,6 @@ void checkDriver(T result, CUDADriverWrapper const& wrap, char const* const func
         char const* errorString = nullptr;
         wrap.cuGetErrorName(result, &errorName);
         wrap.cuGetErrorString(result, &errorString);
-        if (info != nullptr)
-        {
-            throw TllmException(file, line,
-                fmtstr(
-                    "[TensorRT-LLM][ERROR] CUDA driver error in %s (%s): %s: %s.", func, info, errorName, errorString)
-                    .c_str());
-        }
         throw TllmException(file, line,
             fmtstr("[TensorRT-LLM][ERROR] CUDA driver error in %s: %s: %s.", func, errorName, errorString).c_str());
     }
@@ -182,13 +175,6 @@ void checkDriverExitSafe(T result, char const* const func, char const* const fil
     {                                                                                                                  \
         tensorrt_llm::common::checkDriver(                                                                             \
             (stat), *tensorrt_llm::common::CUDADriverWrapper::getInstance(), #stat, __FILE__, __LINE__);               \
-    } while (0)
-
-#define TLLM_CU_CHECK_WITH_INFO(stat, info, ...)                                                                       \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        tensorrt_llm::common::checkDriver((stat), *tensorrt_llm::common::CUDADriverWrapper::getInstance(), #stat,      \
-            __FILE__, __LINE__, tensorrt_llm::common::fmtstr(info, ##__VA_ARGS__).c_str());                            \
     } while (0)
 
 // Avoid using CUDADriverWrapper when freeing resource, during which the global instance may already be freed.

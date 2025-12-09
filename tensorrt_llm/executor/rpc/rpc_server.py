@@ -108,12 +108,8 @@ class RPCServer:
         self._client_socket = ZeroMqQueue(address=(address, self._hmac_key),
                                           is_server=True,
                                           is_async=True,
-<<<<<<< HEAD
                                           use_hmac_encryption=self._hmac_key
                                           is not None,
-=======
-                                          use_hmac_encryption=False,
->>>>>>> 5ebfe9501 (fix race condition)
                                           socket_type=socket_type,
                                           name="rpc_server")
         logger.info(f"RPCServer is bound to {self._address}")

@@ -1,6 +1,5 @@
 import asyncio
 import os
-import asyncio
 from typing import Any, Dict, List, Optional, Tuple
 
 try:
@@ -38,17 +37,12 @@ class RayExecutor(RpcExecutorMixin, GenerationExecutor):
                  model_world_size: int,
                  postproc_worker_config: PostprocWorkerConfig,
                  is_llm_executor: bool,
-                 tp_size=1,
-                 placement_share: float = 1.0,
-                 placement_where: list[tuple[PlacementGroup, list[int]]] = None):
+                 tp_size=1):
         os.environ['RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES'] = '1'
         os.environ["RAY_DEDUP_LOGS"] = "0"  # for debug
 
         super().__init__(model_world_size, postproc_worker_config,
                          is_llm_executor)
-
-        self.placement_share = placement_share
-        self.placement_where = placement_where
 
         self.has_start_local_cluser = False
         runtime_env = {
@@ -169,23 +163,6 @@ class RayExecutor(RpcExecutorMixin, GenerationExecutor):
             await asyncio.gather(*self._get_worker_ready_futures())
         except ray.exceptions.ActorDiedError as e:
             raise RuntimeError("RayGPUWorker died during initialization") from e
-
-    async def init_workers_async(self):
-        self.create_workers(RayGPUWorker, self.worker_kwargs)
-        try:
-            await asyncio.gather(*[worker.__ray_ready__.remote() for worker in self.workers])
-        except ray.exceptions.ActorDiedError as e:
-            if "The actor died because of an error raised in its creation task" in str(
-                    e):
-                raise RuntimeError(
-                    "RayGPUWorker died during initialization") from e
-            raise
-
-        self.setup_engine_remote()
-        self.setup_mainloop(tasks=[self._fetch_responses_loop_async],
-                            thread_name="ray_executor_main_loop")
-        logger.info(f"Connecting to RPC server at {self.rpc_addr}")
-
 
     @unwrap_ray_errors()
     def call_all_ray_workers(self, func: str, leader_only: bool,

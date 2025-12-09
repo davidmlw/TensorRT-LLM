@@ -216,7 +216,7 @@ struct LocalCreator : CUDAVirtualMemoryChunk::Creator
     CUmemGenericAllocationHandle create() override
     {
         CUmemGenericAllocationHandle handle{};
-        TLLM_CU_CHECK_WITH_INFO(cuMemCreate(&handle, mSize, &mProp, 0), "allocating %zu bytes of memory", mSize);
+        TLLM_CU_CHECK(cuMemCreate(&handle, mSize, &mProp, 0));
         if constexpr (count)
         {
             MemoryCounters::getInstance().allocate(
